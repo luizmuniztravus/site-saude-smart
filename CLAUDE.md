@@ -23,7 +23,9 @@ Servir por HTTP (e não abrir o `file://`) importa porque o widget do CRM e
 as fontes do Google são carregados de terceiros.
 
 Publicação: copiar `index.html` e `imagens/` para a raiz do Apache,
-guardando cópia do `index.html` anterior. `teste-widget.html` é uma página
+guardando cópia do `index.html` anterior. O `crm-chave.js` sobe uma vez
+só e fica (veja as armadilhas, no fim deste arquivo); localmente, para
+exercitar o envio ao CRM, crie-o a partir do `crm-chave.exemplo.js`. `teste-widget.html` é uma página
 de inspeção do formulário do CRM e **não** vai para produção.
 
 Teste é manual, pelo navegador: enviar o formulário com dados reais e
@@ -41,18 +43,38 @@ O caminho de um lead:
 
 1. O visitante preenche o formulário bonito da página (`#formEstudo`),
    validado por `validar()`/`coletar()`.
-2. `enviarAoCrm()` copia os dados para o formulário do widget do Funil de
-   Vendas (`#validation`), que está **oculto** no fim da página (`div
-   #FormFunildeVendas`, fora da tela), e o submete para dentro de um
-   `<iframe>` oculto. É POST de formulário real, não `fetch`, para não
-   depender de CORS e não navegar a página embora.
+2. `enviarAoCrm()` despacha para **um** de dois caminhos, nunca os dois:
+   - **Caminho 1, `enviarPelaApi()`:** `XMLHttpRequest` POST em
+     `app.funildevendas.com.br/api/Opportunity?IntegrationKey=…`, com o
+     corpo montado por `corpoParaApi()`. Cria a oportunidade já no
+     vendedor, no funil e na etapa de `CONFIG.crm.api`. O endpoint
+     devolve `Access-Control-Allow-Origin: *` (conferido no servidor,
+     não suposto), então a chamada do navegador passa. É XHR e não
+     `fetch` só para o arquivo seguir em ES5 inteiro.
+   - **Caminho 2, `enviarPeloWidget()`:** o antigo. Copia os dados para
+     o formulário do widget (`#validation`), **oculto** no fim da página
+     (`div #FormFunildeVendas`, fora da tela), e o submete para dentro de
+     um `<iframe>` oculto — submit de formulário real, que não depende de
+     CORS nem navega a página embora. Só roda quando o caminho 1 falha.
 3. Em seguida abre o WhatsApp com a mensagem montada por `mensagem()`.
 
 Duas consequências a respeitar em qualquer alteração:
 
-- **Fail-open:** o lead nunca se perde por causa do CRM. Widget desligado,
-  ausente, ou sem atributo `action` → aviso no console e segue direto para
-  o WhatsApp. Todo o envio ao CRM está dentro de `try/catch`.
+- **Fail-open:** o lead nunca se perde por causa do CRM. API recusando,
+  fora do ar ou demorando; widget desligado, ausente, ou sem atributo
+  `action` → aviso no console e segue direto para o WhatsApp. Todo o
+  envio ao CRM está dentro de `try/catch`.
+- **Nunca os dois caminhos no mesmo envio**, senão o consultor recebe a
+  mesma pessoa duas vezes no funil. Por isso o `ontimeout` da API chama
+  `pronto` e não `falhou`: estourou o tempo, o POST pode ter chegado e
+  estar sendo gravado, e repetir pelo widget duplicaria o card.
+- **A API responde HTTP 200 mesmo quando recusa.** Quem diz se deu certo
+  é o campo `response` do JSON (`"success"`/`"failure"`); `message` traz
+  o motivo. Chave inválida, código inexistente e campo personalizado
+  desconhecido vêm todos como 200.
+- `CONFIG.crm.api.espera` (2,5 s) é o teto da espera antes do WhatsApp,
+  e não deve subir muito: o `window.open` só passa sem bloqueio enquanto
+  dura a ativação do clique, que é de poucos segundos.
 - **`perfil` tem dois valores**, não três: `Eu ou minha família` e
   `Minha empresa (2 a 29 vidas)`. São chave de busca em
   `tituloParaCrm()` — mexer na string muda o título da oportunidade.
@@ -60,12 +82,26 @@ Duas consequências a respeitar em qualquer alteração:
   cartão, do rodapé e do mapa de `tituloParaCrm()`; a remoção veio do
   `main` do repositório e foi seguida na reconciliação. Esse perfil já
   não chega ao CRM.
-- **A qualificação viaja no campo `Tag`.** O widget tem só nome, e-mail e
-  telefone (mais os personalizados `Idades`, `cep` e um `textarea` de
-  hospital) e nenhum campo de observação. `tituloParaCrm()` monta uma
-  string tipo `Site - Planos de Saúde · PME · 3 vidas · CEP 01310-100`, que
-  o CRM usa como **título da oportunidade**. Mexer nesse formato muda o que
-  o consultor vê no card do funil.
+- **A qualificação viaja no título da oportunidade.** `tituloParaCrm()`
+  monta `Site - Planos de Saúde · PME · 3 vidas · CEP 01310-100`, que é o
+  que o consultor lê no card do funil antes de abrir. Mexer no formato
+  muda o que ele vê. No caminho 2 a string vai no campo `Tag`, que o
+  widget converte em título por falta de campo de observação; no caminho
+  1 ela é o `titulo` de verdade. A mesma função serve aos dois.
+- **Os três campos personalizados existem no CRM com estes títulos
+  exatos:** `Idades`, `cep` e `Hospital que você não quer perder` — lidos
+  da definição publicada do widget
+  (`leads.funildevendas.com.br/Forms/Plugin/ValidWidget.asp?Widget=…`),
+  não chutados. Na API eles estão em `CONFIG.crm.api.campos`, e o casamento
+  é **pelo texto do título**: um título que não existe mais no CRM derruba
+  a oportunidade inteira, não só aquele campo. O caminho 2 é mais tolerante
+  — lá um campo que sumiu é só ignorado.
+- **A API não tem campos de `utm_*`; o widget tinha.** Por isso
+  `rastreio()` junta tudo numa linha só, para um campo personalizado cujo
+  título fica em `CONFIG.crm.api.campos.rastreio`. Ele nasce **vazio de
+  propósito**, porque esse campo ainda não foi criado no CRM e um título
+  desconhecido faria a API recusar o lead inteiro. Criado o campo, é uma
+  linha. A `Tag` da URL não depende disso: ela entra no título.
 
 `acharCampo()` localiza os campos do widget por regex sobre `id`/`name`/
 `placeholder`, com fallback por `type`, justamente porque o gerador do CRM
@@ -259,8 +295,28 @@ contrato com o CRM.
 
 ## Armadilhas conhecidas
 
-- A chave do CRM está **duplicada**: no `data-name` do `<script>` do widget
-  e em `CONFIG.crm.chave`. Trocar de conta exige mudar nos dois.
+- **São duas chaves diferentes, não uma, e moram em lugares diferentes.**
+  A do widget (`XCSF72…`) está **duplicada** dentro do `index.html`, no
+  `data-name` do `<script>` do widget e em `CONFIG.crm.chave`. A da API é
+  um GUID e **não está no repositório**: vem de `crm-chave.js`, carregado
+  por um `<script src>` logo antes do script principal, que define
+  `window.CHAVE_CRM` e que `CONFIG.crm.api.chave` lê. Trocar de conta
+  exige mexer nos três lugares e ainda rever os cinco códigos de
+  `CONFIG.crm.api` (vendedor, funil, etapa, canal, segmento), que são por
+  conta e não se deduzem.
+- **`crm-chave.js` está no `.gitignore` e isso não é descuido**: o
+  repositório é público, e chave commitada em repositório público é
+  varrida por robô e fica no histórico mesmo depois de trocada. O modelo
+  versionado é `crm-chave.exemplo.js`; o arquivo de verdade existe só no
+  servidor. **Não o recrie dentro do repositório** achando que está
+  faltando — faltando, a chave é vazia, a API não é chamada e o lead vai
+  pelo widget, que é o comportamento desenhado.
+- **No navegador a chave aparece de qualquer jeito.** Tirá-la do git
+  resolve o robô e o histórico, não o visitante curioso: ela permite
+  criar — e, de posse do código de uma oportunidade, editar — cards deste
+  funil. É o preço de integrar sem servidor próprio, e está dito assim no
+  README. Virando problema de verdade, o passo seguinte é um script no
+  servidor fazendo a chamada.
 - O `Forms.js` do Funil de Vendas instala um Pixel do Facebook por conta
   própria se houver Pixel configurado dentro do CRM. Preencher
   `CONFIG.metaPixel` com o mesmo ID conta `PageView` duas vezes — use um

@@ -1063,6 +1063,15 @@ details p{padding-bottom:23px;font-size:16px;line-height:1.7;color:var(--texto-2
 <script src="https://leads.funildevendas.com.br/Forms/Forms.js" id="KeyFormsFunil" data-name="XCSF720261022180737"></script>
 </div><!-- Widget Funil de Vendas™ -->
 
+<!-- Chave de integração da API do CRM. Mora neste arquivo à parte, que
+     fica no .gitignore e existe só no servidor, porque o repositório é
+     público: chave commitada em repositório público é varrida por robô
+     e continua no histórico mesmo depois de trocada. Veja o modelo em
+     crm-chave.exemplo.js.
+     Faltando o arquivo, o 404 no console é inofensivo: a chave fica
+     vazia, a API nem é chamada e o lead segue pelo widget. -->
+<script src="crm-chave.js"></script>
+
 <script>
 /* =====================================================================
    CONFIGURAÇÃO — é só aqui que se mexe para ligar as integrações.
@@ -1072,21 +1081,70 @@ var CONFIG = {
   whatsapp: "5511952657883",
 
   // ---------------------------------------------------------------
-  // CRM Funil de Vendas — Formulário de Captura (widget)
-  // O widget fica oculto no fim da página e tem só três campos:
-  // nome, e-mail e telefone. No envio, o formulário desta página
-  // preenche esses três e dispara o do CRM.
-  // Para trocar de conta, mude a chave NOS DOIS lugares: aqui e no
-  // atributo data-name do widget, logo acima deste bloco.
+  // CRM Funil de Vendas — dois caminhos, nesta ordem:
+  //
+  // 1) a API de oportunidades, um POST JSON que cria o card já no
+  //    vendedor, no funil e na etapa certos, com os campos
+  //    personalizados preenchidos. É o caminho normal;
+  // 2) o widget de captura, o formulário oculto no fim da página,
+  //    que era o caminho único antes da API e ficou como rede de
+  //    proteção — usado só quando a API recusa ou não responde.
+  //
+  // Trocando de conta: a chave da API vai aqui; a do widget vai NOS
+  // DOIS lugares (crm.chave, abaixo, e o data-name do widget, logo
+  // acima deste bloco); e os códigos de vendedor, funil e etapa
+  // precisam ser remedidos no CRM da conta nova.
   // ---------------------------------------------------------------
   crm: {
     ativo: true,
     chave: "XCSF720261022180737",
+
+    api: {
+      ativo: true,
+      url: "https://app.funildevendas.com.br/api/Opportunity",
+
+      // Chave de integração da conta. Vem do crm-chave.js, carregado
+      // logo acima: o arquivo fica no .gitignore e existe só no
+      // servidor, para a chave não entrar num repositório público.
+      // Sem ele a chave é vazia, a API nem é chamada e o lead vai
+      // pelo widget — de propósito, nada quebra.
+      // ATENÇÃO: no navegador ela fica à vista de qualquer jeito, que
+      // é o preço de integrar sem servidor próprio, e permite criar —
+      // e, de posse do código de uma oportunidade, editar — cards
+      // deste funil. Aparecendo lixo no funil, gere outra chave no CRM
+      // e troque no crm-chave.js do servidor.
+      chave: window.CHAVE_CRM || "",
+
+      // Códigos desta conta. Saem do próprio CRM e não se deduzem:
+      // mudando de conta, de funil ou de vendedor, reveja todos.
+      vendedor: 75661,     // codigo_vendedor
+      funil: 24458,        // codigo_metodologia — o funil, no nome da API
+      etapa: 112803,       // codigo_etapa: onde o card entra no funil
+      canal: 126717,       // codigo_canal_venda
+      segmento: 273730,    // codigo_segmento da empresa
+
+      // Títulos dos campos personalizados, escritos exatamente como
+      // estão no CRM: a API casa pelo texto, não por um id. Estes
+      // três são os mesmos que o widget já preenchia. O de rastreio
+      // nasce vazio porque ainda não existe lá — ver rastreio().
+      campos: {
+        idades: "Idades",
+        cep: "cep",
+        rede: "Hospital que você não quer perder",
+        rastreio: ""
+      },
+
+      // Quanto esperar pela resposta antes de seguir para o WhatsApp.
+      // Não suba muito: o navegador só deixa window.open passar sem
+      // bloqueio por alguns segundos depois do clique, e o WhatsApp
+      // abre depois desta espera.
+      espera: 2500
+    },
+
     // Vira o TÍTULO da oportunidade no funil. O perfil e o número de
-    // vidas entram aqui para o consultor ver a qualificação no card,
-    // já que o widget não tem campo de observação.
+    // vidas entram aqui para o consultor ver a qualificação no card.
     tagPadrao: "Site - Planos de Saúde",
-    // Código do canal de venda, se quiser fixar um.
+    // Canal de venda do caminho 2; a API usa o api.canal acima.
     // (Configurações > Integrações > Entrada de dados > Canal de Venda)
     canalPadrao: ""
   },
@@ -1114,12 +1172,25 @@ var UTM = (function () {
 })();
 
 /* ============ ENVIO AO CRM ============
-   Usa POST de formulário real dentro de um iframe oculto, em vez de
-   fetch. É o método que funciona com endpoints de captura de CRM sem
-   depender de CORS, e nunca bloqueia a abertura do WhatsApp.          */
-/* O widget tem só nome, e-mail e telefone — não há campo de observação.
-   A qualificação vai no campo Tag, que o CRM usa como TÍTULO da
-   oportunidade, então o consultor já vê o perfil no card do funil.   */
+   Dois caminhos, nesta ordem e nunca os dois no mesmo envio — senão o
+   consultor recebe a mesma pessoa duas vezes no funil:
+
+   1. a API de oportunidades (POST JSON). Cria o card já no vendedor,
+      no funil e na etapa certos, com os campos personalizados
+      preenchidos, e devolve se deu certo. O endpoint responde com
+      Access-Control-Allow-Origin: *, então a chamada sai direto do
+      navegador — foi conferido no servidor, não suposto;
+   2. o formulário oculto do widget, submetido dentro de um iframe.
+      Era o caminho único antes da API e fica como rede de proteção:
+      não depende da API estar no ar, e o iframe evita que a página
+      navegue embora.
+
+   Nos dois casos, e também quando os dois falham, o WhatsApp abre.
+   O lead nunca se perde por causa do CRM.                            */
+/* A qualificação (perfil, vidas, CEP) vai no TÍTULO da oportunidade,
+   que é o que o consultor lê no card antes de abrir. Era assim no
+   widget, onde o título vinha do campo Tag por falta de campo de
+   observação, e continua assim na API, onde ele é campo de verdade. */
 function tituloParaCrm(d) {
   var curto = {
     "Eu ou minha família": "Familiar",
@@ -1134,6 +1205,124 @@ function tituloParaCrm(d) {
   if (d.cep) partes.push("CEP " + d.cep);
   return partes.join(" · ").slice(0, 120);
 }
+
+/* ------------- CAMINHO 1: API DE OPORTUNIDADES ------------- */
+
+/* A atribuição de campanha. O widget tinha campos nativos de utm_*;
+   a API não tem nenhum, então tudo vai junto num campo personalizado.
+   Para ligar: crie um campo de texto no CRM (por exemplo "Origem") e
+   escreva o título dele em CONFIG.crm.api.campos.rastreio. Enquanto
+   estiver vazio, nada é enviado, de propósito: título que a API não
+   conhece derruba a oportunidade inteira, e um lead ia parar no
+   caminho 2 só por causa da etiqueta. O Tag da URL não depende disso
+   — ele continua entrando no título, por tituloParaCrm().           */
+function rastreio() {
+  var partes = [];
+  ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"]
+    .forEach(function (k) {
+      if (UTM[k]) partes.push(k.replace("utm_", "") + ": " + UTM[k]);
+    });
+  if (UTM.origem) partes.push("origem: " + UTM.origem);
+  if (UTM.url) partes.push("página: " + UTM.url);
+  return partes.join(" | ");
+}
+
+/* Monta o JSON que a API espera. "empresa" é obrigatório mesmo quando
+   o lead é pessoa física, então entra o nome da própria pessoa: é o
+   que o CRM mostra no card, e inventar razão social seria pior.     */
+function corpoParaApi(d) {
+  var api = CONFIG.crm.api;
+  var campos = api.campos || {};
+  var personalizados = [];
+
+  function juntar(titulo, valor) {
+    if (titulo && valor) personalizados.push({ titulo: titulo, valor: String(valor) });
+  }
+  juntar(campos.idades, d.idades);
+  juntar(campos.cep, d.cep);
+  juntar(campos.rede, d.rede);
+  juntar(campos.rastreio, rastreio());
+
+  var oportunidade = {
+    titulo: tituloParaCrm(d),
+    valor: 0,
+    codigo_vendedor: api.vendedor,
+    codigo_metodologia: api.funil,
+    // ForceCodeChannel na URL manda mais que o canal fixo, para a
+    // campanha poder marcar a própria entrada.
+    codigo_canal_venda: Number(UTM.ForceCodeChannel) || api.canal,
+    personalizados: personalizados,
+    empresa: {
+      nome: d.nome,
+      codigo_segmento: String(api.segmento),
+      // O CEP vai também no endereço, além do campo personalizado:
+      // é onde o CRM procura quando o consultor filtra por região.
+      endereco_completo: {
+        logradouro: "", numero: "", complemento: "",
+        bairro: "", cidade: "", uf: "", cep: d.cep
+      }
+    },
+    contato: {
+      nome: d.nome,
+      email: d.email,
+      telefone1: d.telefone
+    }
+  };
+  if (api.etapa) oportunidade.codigo_etapa = api.etapa;
+
+  return { oportunidades: [oportunidade] };
+}
+
+/* XMLHttpRequest, e não fetch, para o arquivo seguir em ES5 inteiro.
+   Chama "pronto" quando o lead já está no CRM (ou quando insistir só
+   faria estrago) e "falhou" quando vale tentar o widget.            */
+function enviarPelaApi(d, pronto, falhou) {
+  var api = (CONFIG.crm || {}).api || {};
+  if (!api.ativo || !api.chave || !window.XMLHttpRequest) { falhou(); return; }
+
+  var corpo;
+  try { corpo = JSON.stringify(corpoParaApi(d)); }
+  catch (e) { falhou(); return; }
+
+  var xhr = new XMLHttpRequest();
+  try {
+    xhr.open("POST", api.url + "?IntegrationKey=" + encodeURIComponent(api.chave), true);
+    xhr.setRequestHeader("Content-Type", "application/json");
+  } catch (e) { falhou(); return; }
+
+  xhr.timeout = api.espera || 2500;
+
+  // A API responde HTTP 200 até quando recusa. Quem diz se deu certo
+  // é o campo "response" do JSON — chave errada, código de vendedor
+  // inexistente e campo personalizado desconhecido vêm todos como 200.
+  xhr.onload = function () {
+    var r = null;
+    try { r = JSON.parse(xhr.responseText); } catch (e) {}
+    if (r && r.response === "success") { pronto(); return; }
+    if (window.console) {
+      console.warn("[The Smart] CRM recusou a oportunidade (" +
+        ((r && r.message) || ("HTTP " + xhr.status)) + "). Tentando pelo widget.");
+    }
+    falhou();
+  };
+
+  xhr.onerror = function () {
+    if (window.console) console.warn("[The Smart] API do CRM fora do ar ou bloqueada. Tentando pelo widget.");
+    falhou();
+  };
+
+  // Estourou o tempo: o pedido pode ter chegado e estar sendo gravado.
+  // Repetir pelo widget criaria uma segunda oportunidade da mesma
+  // pessoa, então daqui segue direto para o WhatsApp.
+  xhr.ontimeout = function () {
+    if (window.console) console.warn("[The Smart] API do CRM demorou a responder; o lead segue para o WhatsApp.");
+    pronto();
+  };
+
+  try { xhr.send(corpo); } catch (e) { falhou(); }
+}
+
+/* ------------- CAMINHO 2: WIDGET DE CAPTURA ------------- */
 
 /* Acha um campo do formulário do widget sem depender do name exato,
    que pode mudar quando o CRM atualizar o gerador.                   */
@@ -1161,7 +1350,7 @@ function preencherCampo(el, valor) {
   return true;
 }
 
-function enviarAoCrm(d, pronto) {
+function enviarPeloWidget(d, pronto) {
   var crm = CONFIG.crm || {};
   var f = document.getElementById("validation");
 
@@ -1236,6 +1425,16 @@ function enviarAoCrm(d, pronto) {
   } catch (e) { /* falha no CRM nunca impede o lead de chegar pelo WhatsApp */ }
 
   setTimeout(pronto, 350);
+}
+
+/* ------------- QUEM DECIDE ------------- */
+
+/* A API primeiro; o widget só quando ela recusa ou está fora do ar.
+   Os dois juntos criariam duas oportunidades da mesma pessoa.       */
+function enviarAoCrm(d, pronto) {
+  var crm = CONFIG.crm || {};
+  if (!crm.ativo) { pronto(); return; }
+  enviarPelaApi(d, pronto, function () { enviarPeloWidget(d, pronto); });
 }
 
 /* ============ MEDIÇÃO (só carrega se houver ID) ============ */

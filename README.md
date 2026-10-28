@@ -6,6 +6,7 @@ Apache, substituindo os arquivos atuais.
 
 ```
 index.html
+crm-chave.js        ← só uma vez; veja abaixo
 imagens/
   logo-thesmart.png
   operadora-amil.svg
@@ -20,12 +21,63 @@ Guarde uma cópia do `index.html` antigo antes de sobrescrever.
 O arquivo `teste-widget.html` **não precisa ser publicado** — era só para
 inspecionar o formulário do CRM. Pode apagar.
 
+### O `crm-chave.js`, uma vez só
+
+A chave de integração do CRM mora num arquivo à parte, que **não está no
+repositório** (o repositório é público). Na primeira publicação:
+
+```bash
+cp crm-chave.exemplo.js crm-chave.js    # e cole a chave dentro
+```
+
+Suba-o junto do `index.html`, na mesma pasta. Depois disso ele fica lá e
+não muda mais — nas publicações seguintes basta o `index.html` e as
+imagens. **Não commite esse arquivo**; ele já está no `.gitignore`.
+
+Se ele faltar no servidor, nada quebra: o console mostra um 404, a API
+do CRM não é chamada e o lead segue pelo widget e pelo WhatsApp, como
+antes desta integração.
+
 ---
 
 ## 1. Como o lead chega no CRM
 
-O widget do Funil de Vendas já está embutido na página, **oculto**, no fim
-do `index.html`:
+São **dois caminhos**, tentados nesta ordem — e nunca os dois no mesmo
+envio, senão o consultor receberia a mesma pessoa duas vezes no funil.
+
+### Caminho 1 — API de oportunidades (o normal)
+
+Quando o visitante envia o formulário, o site faz um POST direto para a
+API do Funil de Vendas e já cria a oportunidade no lugar certo:
+
+| O que | Valor hoje | Onde se muda |
+|---|---|---|
+| Vendedor | 75661 | `CONFIG.crm.api.vendedor` |
+| Funil (na API, "metodologia") | 24458 | `CONFIG.crm.api.funil` |
+| Etapa onde o card entra | 112803 | `CONFIG.crm.api.etapa` |
+| Canal de venda | 126717 | `CONFIG.crm.api.canal` |
+| Segmento da empresa | 273730 | `CONFIG.crm.api.segmento` |
+
+Esses códigos **saem do CRM e não se deduzem**. Mudando de conta, de
+funil ou de vendedor, os cinco precisam ser conferidos de novo.
+
+A chave de integração não está nessa tabela de propósito: ela vem do
+`crm-chave.js`, o arquivo que fica só no servidor (ver no começo deste
+manual).
+
+> ⚠️ **No navegador, a chave fica à vista de qualquer jeito.** É o preço
+> de integrar um site estático, sem servidor próprio: quem abrir o
+> código-fonte da página consegue criar oportunidades neste funil. Tirá-la
+> do repositório evita o pior — robô de varredura e histórico permanente
+> do git —, mas não a esconde do visitante. Aparecendo lixo no funil,
+> gere outra chave no CRM e troque o `crm-chave.js` do servidor. Se isso
+> virar problema de verdade, o passo seguinte é um script no servidor
+> fazendo a chamada, e aí a chave some da página.
+
+### Caminho 2 — widget de captura (a rede de proteção)
+
+O widget do Funil de Vendas continua embutido na página, **oculto**, no
+fim do `index.html`:
 
 ```html
 <div id="FormFunildeVendas" aria-hidden="true" style="position:absolute;left:-9999px;...">
@@ -34,45 +86,47 @@ do `index.html`:
 </div>
 ```
 
-O visitante preenche o formulário bonito da página. No envio, o site
-copia nome, e-mail e telefone para o formulário do widget e dispara esse
-formulário dentro de um iframe invisível. Em seguida abre o WhatsApp.
+Ele só entra em cena **quando a API recusa ou está fora do ar**. Aí o
+site copia nome, e-mail e telefone para o formulário do widget e dispara
+esse formulário dentro de um iframe invisível, como era antes da API.
 
-**Por que assim:** o widget do CRM tem só três campos e um visual próprio.
-Embuti-lo visível destruiria o design da seção e perderia a qualificação
-de saúde. Desse jeito você fica com os dois.
+### Onde fica a qualificação de saúde
 
-### Onde foi parar a qualificação de saúde
+Os três campos personalizados que você criou — `Idades`, `cep` e
+`Hospital que você não quer perder` — são preenchidos nos dois caminhos.
+O CEP vai também no endereço da empresa, que é onde o CRM procura quando
+alguém filtra por região.
 
-O formulário do CRM tem três campos obrigatórios — `Name`, `eMail` e
-`WhatsApp` — mais três personalizados que você criou: `Idades`, `cep` e
-`Hospital que você não quer perder`. Todos são preenchidos.
-
-Além deles, o campo `Tag` recebe um resumo que o CRM usa como **título da
-oportunidade**, para o consultor ver a qualificação no card do funil sem
-precisar abrir:
+Além deles, a oportunidade recebe um **título** com a qualificação, para
+o consultor ler no card sem precisar abrir:
 
 ```
 Site - Planos de Saúde · PME · 3 vidas · CEP 01310-100
 ```
 
-Se você apagar algum campo personalizado no CRM, o preenchimento daquele
-campo é simplesmente ignorado — nada quebra.
+Se você apagar algum campo personalizado no CRM, o caminho 2 ignora aquele
+campo sem quebrar. **No caminho 1 é diferente:** a API casa o campo pelo
+título escrito, então um título que não existe mais no CRM faz ela recusar
+a oportunidade inteira — o lead cai no caminho 2 e aparece um aviso no
+console. Mudando os campos no CRM, me avise para eu acertar os títulos em
+`CONFIG.crm.api.campos`.
 
-> **Campos confirmados em 22/10/2026**, inspecionando o formulário
-> publicado. Se você mudar os campos no CRM, me avise para eu refazer o
-> mapeamento.
+> **Campos e códigos confirmados em 27/10/2026.** Os títulos dos campos
+> vieram da inspeção do formulário publicado; os códigos de vendedor,
+> funil, etapa e canal foram informados por você.
 
 ### Trocar de conta do CRM
 
-Mude a chave **nos dois lugares**: no `data-name` do widget e em
-`CONFIG.crm.chave`.
+- Chave da API: dentro do `crm-chave.js`, no servidor (não no `index.html`)
+- Chave do widget: **nos dois lugares**, no `data-name` do widget e em
+  `CONFIG.crm.chave`
+- E reveja os cinco códigos da tabela acima
 
 ### Se o CRM falhar
 
-O lead **nunca se perde por causa do CRM**. Se o widget não carregar,
-estiver fora do ar ou vier sem `action`, o código registra um aviso no
-console e segue direto para o WhatsApp.
+O lead **nunca se perde por causa do CRM**. API recusando, API fora do
+ar, widget sem carregar ou sem `action`: em todos os casos o código
+registra um aviso no console e segue direto para o WhatsApp.
 
 ---
 
@@ -83,7 +137,7 @@ A página lê da URL, guarda na sessão do visitante e repassa ao CRM:
 - `Tag` → entra no começo do título da oportunidade
 - `ForceCodeChannel` → define o **canal de venda**
   (código em *Configurações › Integrações › Entrada de dados › Canal de Venda*)
-- `utm_source`, `utm_campaign`, `utm_term`
+- `utm_source`, `utm_campaign`, `utm_medium`, `utm_term`, `utm_content`
 
 Exemplo de link para anúncio:
 
@@ -94,6 +148,29 @@ https://www.thesmart.com.br/?Tag=Meta-PME&ForceCodeChannel=123&utm_source=facebo
 Como os valores ficam guardados na sessão, eles sobrevivem à navegação
 dentro do site até o envio do formulário — a atribuição não se perde se a
 pessoa passear pela página antes de converter.
+
+### As UTMs no caminho 1: falta um campo no CRM
+
+O widget tinha campos nativos de `utm_*`. **A API não tem nenhum.** Hoje,
+pelo caminho 1, o que chega ao CRM é a `Tag` (dentro do título) e o canal
+de venda — as UTMs em si ficam de fora.
+
+Para recuperá-las, é um ajuste de dois minutos:
+
+1. no CRM, crie um campo personalizado de texto na oportunidade, por
+   exemplo **`Origem`**;
+2. me avise, que eu escrevo esse título em `CONFIG.crm.api.campos.rastreio`.
+
+A partir daí cada oportunidade chega com uma linha assim:
+
+```
+source: facebook | campaign: saude-pme | origem: https://www.google.com/ | página: https://www.thesmart.com.br/
+```
+
+O campo nasce **vazio de propósito**: a API casa o campo pelo título, e
+mandar um título que não existe no CRM faria ela recusar a oportunidade
+inteira. Melhor perder a etiqueta do que jogar o lead no caminho 2 por
+causa dela.
 
 Para as UTMs aparecerem em toda oportunidade, crie campos personalizados
 com **exatamente** estes nomes em *Configurações › Personalizar campos ›
@@ -135,15 +212,30 @@ Escolha **um dos dois**:
 ## 4. Como testar depois de publicar
 
 1. Abra o site e envie o formulário com os seus próprios dados.
-2. Confira se a oportunidade apareceu no funil, com o título qualificado.
-3. Abra o console do navegador (F12) e veja se há aviso
-   `[The Smart] Formulário do CRM sem action`. Se houver, o widget mudou
-   de formato e o envio ao CRM precisa de ajuste — me chame.
-4. Teste um link com `?Tag=Teste&utm_source=teste` e veja se chega no CRM.
+2. Confira se a oportunidade apareceu no funil — **no vendedor, no funil
+   e na etapa certos**, com o título qualificado e os três campos
+   personalizados preenchidos.
+3. Abra o console do navegador (F12) e veja se há algum aviso começando
+   por `[The Smart]`. Todos querem dizer que a API não aceitou o lead e
+   ele foi pelo caminho 2:
+   - `CRM recusou a oportunidade (…)` — a mensagem entre parênteses vem
+     do próprio CRM. Costuma ser código errado (vendedor, funil, etapa,
+     canal, segmento) ou título de campo personalizado que não existe lá.
+   - `API do CRM fora do ar ou bloqueada` — rede, ou um bloqueador de
+     anúncios no navegador do visitante.
+   - `API do CRM demorou a responder` — passou dos 2,5 s. A oportunidade
+     pode ter sido criada mesmo assim; confira no funil antes de reenviar.
+   - `Formulário do CRM sem action` — o caminho 2 também falhou: o widget
+     mudou de formato e precisa de ajuste. Me chame.
+4. Teste um link com `?Tag=Teste&utm_source=teste` e veja se a Tag chega
+   no título da oportunidade.
 
-O e-mail é **obrigatório** no formulário porque o widget do CRM pede esse
-campo. Se você confirmar que o CRM aceita lead sem e-mail, dá para voltar
-a ser opcional — é uma linha.
+Um aviso no console **não** significa lead perdido: o WhatsApp abre em
+todos os casos, e é por ele que o consultor fala com a pessoa.
+
+O e-mail é **obrigatório** no formulário por causa do caminho 2: o widget
+do CRM exige esse campo (a API não). Se um dia o widget sair de cena, dá
+para voltar a ser opcional — é uma linha.
 
 ---
 

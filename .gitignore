@@ -10,3 +10,9 @@ imagens/hero1.jpg
 
 # worktrees que o Claude Code cria para trabalhar em paralelo
 .claude/
+
+# chave de integracao da API do CRM: este repositorio e publico, e
+# chave commitada em repo publico e varrida por robo e fica no
+# historico mesmo depois de trocada. O arquivo vive no servidor;
+# o modelo versionado e o crm-chave.exemplo.js
+crm-chave.js
